@@ -37,7 +37,7 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 daily_thread_count = defaultdict(
     lambda: defaultdict(int))  # {date: {channel_name: count}}
 
-MESSAGES_DATE = datetime.now() - timedelta(days=2)
+SCAN_WINDOW = timedelta(days=2)
 
 @bot.event
 async def on_ready():
@@ -56,13 +56,14 @@ def is_staff(interaction: discord.Interaction):
 async def check_auction_channels(interaction: discord.Interaction):
     await interaction.response.send_message("Creating the auction threads.", ephemeral=True)
     today = datetime.now().strftime("%m/%d/%Y")
+    messages_date = datetime.now() - SCAN_WINDOW
     for channel_name, channel_id in CHANNELS.items():
         channel = bot.get_channel(channel_id)
         if not channel:
             print(f"Channel {channel_name} not found.")
             continue
 
-        async for message in channel.history(limit=100, after=MESSAGES_DATE):  # Adjust the message limit as needed
+        async for message in channel.history(limit=100, after=messages_date):  # Adjust the message limit as needed
             if message.author.bot:  # Ignore bot messages
                 continue
             if message.flags.has_thread:  # Skip if a thread already exists
