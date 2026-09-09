@@ -37,7 +37,7 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 daily_thread_count = defaultdict(
     lambda: defaultdict(int))  # {date: {channel_name: count}}
 
-SCAN_WINDOW = timedelta(days=2)
+SCAN_WINDOW = timedelta(days=3)
 
 @bot.event
 async def on_ready():
