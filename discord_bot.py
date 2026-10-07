@@ -233,7 +233,8 @@ def find_denied_user_ids(guild: discord.Guild):
             continue
 
         for target, overwrite in channel.overwrites.items():
-            is_user = isinstance(target, discord.Member) or getattr(target, "type", None) is discord.User
+            # discord.py types uncached members as discord.abc.User, which is not discord.User.
+            is_user = isinstance(target, discord.Member) or getattr(target, "type", None) is discord.abc.User
             if is_user and overwrite.view_channel is False:
                 user_ids.add(target.id)
 
