@@ -1,3 +1,5 @@
 /.idea
 /__pycache__
 .env
+/banned_users.json
+/banned_users.json.tmp

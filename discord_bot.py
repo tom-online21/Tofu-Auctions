@@ -1,10 +1,11 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 from collections import defaultdict
 import asyncio
 import io
+import json
 import os
 from dotenv import load_dotenv
 from format_data import format_data
@@ -26,6 +27,9 @@ VIEW_CHANNEL_IDS = [
     1288167233159299104,  # auction-queue
     1294702970897956934,  # auction-lounge
 ]
+
+BANNED_USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banned_users.json")
+BAN_CHECK_INTERVAL = timedelta(minutes=5)
 
 CHANNELS = {
     "single-print-auction": 1288166824571306056,
@@ -50,11 +54,28 @@ daily_thread_count = defaultdict(
 
 SCAN_WINDOW = timedelta(days=3)
 
+def load_banned_users():
+    try:
+        with open(BANNED_USERS_FILE) as file:
+            return set(json.load(file))
+    except FileNotFoundError:
+        return set()
+
+def save_banned_users():
+    temp_file = BANNED_USERS_FILE + ".tmp"
+    with open(temp_file, "w") as file:
+        json.dump(sorted(banned_users), file)
+    os.replace(temp_file, BANNED_USERS_FILE)
+
+banned_users = load_banned_users()
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     synced = await bot.tree.sync(guild=GUILD_OBJ)
     print(f"Synced {len(synced)} commands to guild {GUILD_OBJ.id}")
+    if not enforce_auction_bans.is_running():
+        enforce_auction_bans.start()
     # await check_auction_channels()
     # print("Processing complete. Shutting down...")
     # await bot.close()  # Log out and terminate the bot
@@ -130,6 +151,57 @@ async def format_data_command(interaction: discord.Interaction, attachment: disc
     # Send the output file
     await interaction.response.send_message("Here is the formatted output:", file=discord.File(output_file))
 
+def ban_exemption(member: discord.Member):
+    if member.bot:
+        return "You cannot Auction Ban a bot."
+    if member.id in STAFF_IDS:
+        return "You cannot Auction Ban a staff member."
+    if member.guild_permissions.administrator:
+        return "You cannot Auction Ban this user."
+    return None
+
+def find_unhidden_channels(guild: discord.Guild, member: discord.Member):
+    channels_to_hide = []
+    failed_channels = []
+
+    for channel_id in VIEW_CHANNEL_IDS:
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            failed_channels.append(f"<#{channel_id}>")
+        elif channel.overwrites_for(member).view_channel is not False:
+            channels_to_hide.append(channel)
+
+    return channels_to_hide, failed_channels
+
+async def hide_channels(channels, member: discord.Member, audit_reason: str):
+    failed_channels = []
+
+    for channel in channels:
+        overwrite = channel.overwrites_for(member)
+        overwrite.view_channel = False
+        try:
+            await channel.set_permissions(member, overwrite=overwrite, reason=audit_reason)
+        except discord.HTTPException:
+            failed_channels.append(channel.mention)
+
+    return failed_channels
+
+def find_denied_user_ids(guild: discord.Guild):
+    user_ids = set()
+
+    for channel_id in VIEW_CHANNEL_IDS:
+        channel = guild.get_channel(channel_id)
+
+        if channel is None:
+            continue
+
+        for target, overwrite in channel.overwrites.items():
+            is_user = isinstance(target, discord.Member) or getattr(target, "type", None) is discord.User
+            if is_user and overwrite.view_channel is False:
+                user_ids.add(target.id)
+
+    return user_ids
+
 @bot.tree.command(name="auctionban", description="Hide the auction channels from a user.", guild=GUILD_OBJ)
 @app_commands.describe(user="The user to auction ban.", reason="Why they are being auction banned.")
 @app_commands.default_permissions()
@@ -140,28 +212,18 @@ async def auction_ban(interaction: discord.Interaction, user: discord.Member,
         return await interaction.response.send_message(f"This command can only be used in <#{AUCTION_STAFF_CHANNEL_ID}>.",
                                                        ephemeral=True)
 
-    refusal = None
-    if user.bot:
-        refusal = "You cannot Auction Ban a bot."
-    elif user.id in STAFF_IDS:
-        refusal = "You cannot Auction Ban a staff member."
-    elif user.guild_permissions.administrator:
-        refusal = "You cannot Auction Ban this user."
-
+    refusal = ban_exemption(user)
     if refusal:
         return await interaction.response.send_message(f"**Failed** to Auction Ban {user.mention}: *{refusal}*",
                                                        ephemeral=True)
 
-    channels_to_hide = []
-    failed_channels = []
-    for channel_id in VIEW_CHANNEL_IDS:
-        channel = interaction.guild.get_channel(channel_id)
-        if channel is None:
-            failed_channels.append(f"<#{channel_id}>")
-        elif channel.overwrites_for(user).view_channel is not False:
-            channels_to_hide.append(channel)
+    channels_to_hide, failed_channels = find_unhidden_channels(interaction.guild, user)
 
     if not channels_to_hide and not failed_channels:
+        if user.id not in banned_users:
+            banned_users.add(user.id)
+            save_banned_users()
+
         return await interaction.response.send_message(f"{user.mention} is already Auction Banned.", ephemeral=True)
 
     await interaction.response.defer()
@@ -171,16 +233,15 @@ async def auction_ban(interaction: discord.Interaction, user: discord.Member,
     if reason:
         audit_reason += f": {reason}"
 
-    for channel in channels_to_hide:
-        overwrite = channel.overwrites_for(user)
-        overwrite.view_channel = False
-        try:
-            await channel.set_permissions(user, overwrite=overwrite, reason=audit_reason)
-        except discord.HTTPException:
-            failed_channels.append(channel.mention)
+    failed_channels += await hide_channels(channels_to_hide, user, audit_reason)
+
+    if len(failed_channels) < len(VIEW_CHANNEL_IDS):
+        banned_users.add(user.id)
+        save_banned_users()
 
     if not failed_channels:
         message = f"**Successfully** Auction Banned {user.mention}."
+        print(f"{interaction.user} Auction Banned {user} ({user.id}). Reason: {reason if reason else 'No reason provided.'}")
     elif len(failed_channels) == len(VIEW_CHANNEL_IDS):
         message = f"**Failed** to Auction Ban {user.mention}. Could not update: {', '.join(failed_channels)}"
     else:
@@ -189,6 +250,42 @@ async def auction_ban(interaction: discord.Interaction, user: discord.Member,
         message += f"\n**Reason:** {reason}"
 
     return await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions.none())
+
+@tasks.loop(seconds=BAN_CHECK_INTERVAL.total_seconds())
+async def enforce_auction_bans():
+    guild = bot.get_guild(GUILD_OBJ.id)
+    if guild is None:
+        print(f"Ban Check Task: Error finding Tofu Guild ({GUILD_OBJ.id})")
+        return
+
+    previous_banned_users = set(banned_users)
+    for user_id in banned_users | find_denied_user_ids(guild):
+        try:
+            member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        except discord.NotFound:
+            continue
+        except discord.HTTPException as error:
+            print(f"Ban Check Task: could not fetch user {user_id}: {error}")
+            continue
+
+        if ban_exemption(member):
+            banned_users.discard(user_id)
+            continue
+
+        banned_users.add(user_id)
+        channels_to_hide, failed_channels = find_unhidden_channels(guild, member)
+        if not channels_to_hide:
+            continue
+
+        failed_channels += await hide_channels(channels_to_hide, member,
+                                               "User is on the Auction Ban list, re-applying Auction Ban.")
+        print(f"Ban Check Task: re-applied ban for {member} ({user_id})")
+
+        if failed_channels:
+            print(f"Ban Check Task: could not update {', '.join(failed_channels)} for {member} ({user_id})")
+
+    if banned_users != previous_banned_users:
+        save_banned_users()
 
 # Run the bot
 bot.run(BOT_TOKEN)
