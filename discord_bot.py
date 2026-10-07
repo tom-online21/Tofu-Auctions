@@ -25,7 +25,8 @@ VIEW_CHANNEL_IDS = [
     1288166867097354282,  # low-print-auction
     1288167157368094820,  # event-auction
     1288167233159299104,  # auction-queue
-    1294702970897956934,  # auction-lounge
+    1294702970897956934,  # auction-lounge,
+    1287822169065263245,  # auction-announcement
 ]
 
 BANNED_USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banned_users.json")
