@@ -130,5 +130,65 @@ async def format_data_command(interaction: discord.Interaction, attachment: disc
     # Send the output file
     await interaction.response.send_message("Here is the formatted output:", file=discord.File(output_file))
 
+@bot.tree.command(name="auctionban", description="Hide the auction channels from a user.", guild=GUILD_OBJ)
+@app_commands.describe(user="The user to auction ban.", reason="Why they are being auction banned.")
+@app_commands.default_permissions()
+@app_commands.check(is_staff)
+async def auction_ban(interaction: discord.Interaction, user: discord.Member,
+                      reason: app_commands.Range[str, 1, 400] | None = None):
+    if interaction.channel_id != AUCTION_STAFF_CHANNEL_ID:
+        return await interaction.response.send_message(f"This command can only be used in <#{AUCTION_STAFF_CHANNEL_ID}>.",
+                                                       ephemeral=True)
+
+    refusal = None
+    if user.bot:
+        refusal = "You cannot Auction Ban a bot."
+    elif user.id in STAFF_IDS:
+        refusal = "You cannot Auction Ban a staff member."
+    elif user.guild_permissions.administrator:
+        refusal = "You cannot Auction Ban this user."
+
+    if refusal:
+        return await interaction.response.send_message(f"**Failed** to Auction Ban {user.mention}: *{refusal}*",
+                                                       ephemeral=True)
+
+    channels_to_hide = []
+    failed_channels = []
+    for channel_id in VIEW_CHANNEL_IDS:
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            failed_channels.append(f"<#{channel_id}>")
+        elif channel.overwrites_for(user).view_channel is not False:
+            channels_to_hide.append(channel)
+
+    if not channels_to_hide and not failed_channels:
+        return await interaction.response.send_message(f"{user.mention} is already Auction Banned.", ephemeral=True)
+
+    await interaction.response.defer()
+
+    # Use Discord's audit log
+    audit_reason = f"Auction Ban by {interaction.user} ({interaction.user.id})"
+    if reason:
+        audit_reason += f": {reason}"
+
+    for channel in channels_to_hide:
+        overwrite = channel.overwrites_for(user)
+        overwrite.view_channel = False
+        try:
+            await channel.set_permissions(user, overwrite=overwrite, reason=audit_reason)
+        except discord.HTTPException:
+            failed_channels.append(channel.mention)
+
+    if not failed_channels:
+        message = f"**Successfully** Auction Banned {user.mention}."
+    elif len(failed_channels) == len(VIEW_CHANNEL_IDS):
+        message = f"**Failed** to Auction Ban {user.mention}. Could not update: {', '.join(failed_channels)}"
+    else:
+        message = f"**Partially** Auction Banned {user.mention}. Could not update: {', '.join(failed_channels)}"
+    if reason:
+        message += f"\n**Reason:** {reason}"
+
+    return await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions.none())
+
 # Run the bot
 bot.run(BOT_TOKEN)
