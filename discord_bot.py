@@ -87,6 +87,7 @@ async def on_ready():
     synced = await bot.tree.sync(guild=GUILD_OBJ)
     print(f"Synced {len(synced)} commands to guild {GUILD_OBJ.id}")
     if not enforce_auction_bans.is_running():
+        print(f"Ban Check Task: starting with {len(banned_users)} users on the Auction Ban list")
         enforce_auction_bans.start()
     # await check_auction_channels()
     # print("Processing complete. Shutting down...")
