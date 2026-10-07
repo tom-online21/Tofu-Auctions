@@ -398,7 +398,10 @@ async def enforce_auction_bans():
                 banned_users.pop(user_id, None)
                 continue
 
-            add_banned_user(user_id)
+            if user_id not in banned_users:
+                add_banned_user(user_id)
+                print(f"Ban Check Task: found manual ban for {member} ({user_id}), added to the Auction Ban list")
+
             channels_to_hide, failed_channels = find_unhidden_channels(guild, member)
             if not channels_to_hide:
                 continue
