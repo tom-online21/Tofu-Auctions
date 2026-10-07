@@ -264,7 +264,6 @@ def split_into_messages(lines):
 
 @bot.tree.command(name="auctionban", description="Hide the auction channels from a user.", guild=GUILD_OBJ)
 @app_commands.describe(user="The user to auction ban.", reason="Why they are being auction banned.")
-@app_commands.default_permissions()
 @app_commands.check(is_staff)
 async def auction_ban(interaction: discord.Interaction, user: discord.Member,
                       reason: app_commands.Range[str, 1, 400] | None = None):
@@ -313,7 +312,6 @@ async def auction_ban(interaction: discord.Interaction, user: discord.Member,
 
 @bot.tree.command(name="auctionunban", description="Remove an Auction Ban from a user.", guild=GUILD_OBJ)
 @app_commands.describe(user="The user to auction unban.")
-@app_commands.default_permissions()
 @app_commands.check(is_staff)
 async def auction_unban(interaction: discord.Interaction, user: discord.Member | discord.User):
     if interaction.channel_id != AUCTION_STAFF_CHANNEL_ID:
@@ -351,7 +349,6 @@ async def auction_unban(interaction: discord.Interaction, user: discord.Member |
 
 @bot.tree.command(name="auctionbanlist", description="Show the users who are currently Auction Banned.", guild=GUILD_OBJ)
 @app_commands.describe(user="Check whether a single user is Auction Banned.")
-@app_commands.default_permissions()
 @app_commands.check(is_staff)
 async def auction_ban_list(interaction: discord.Interaction, user: discord.Member | discord.User | None = None):
     if interaction.channel_id != AUCTION_STAFF_CHANNEL_ID:
